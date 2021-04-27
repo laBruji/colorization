@@ -5,18 +5,44 @@ import math
 import numpy as np
 import itertools
 
-MAX_THRESHOLD = 1
+MAX_THRESHOLD = 1.5
 
 
-def extract_ab_channels_from_image(photo):
+def load_images_from_folder(folder):
+    """
+    Load images from folder
+    :param folder: string with folder path
+    :return: list of images in folder
+    """
+    images = []
+    for filename in os.listdir(folder):
+        img = cv2.imread(os.path.join(folder, filename))
+
+        if img is not None:
+            images.append(img)
+    return images
+
+
+def compute_key(a, b, GRID_SIZE):
+    """
+    Given a point in the ab space, returns the region it belongs to
+    :param a: float, a coordinate of ab color space
+    :param b: float, b coordinate of ab color space
+    :return: region of the point
+    """
+    # GRID_SIZE = 1
+    return math.floor(a / GRID_SIZE), math.floor(b / GRID_SIZE)
+
+
+def extract_ab_channels_from_image(image):
     """
     Extracts the a and b channels given the image
-    :param photo: image
+    :param image: image
     :return: image's a and b channels in the Lab color space
     """
     width, height = 175, 175
     desired_size = (width, height)
-    resized = cv2.resize(photo, desired_size)
+    resized = cv2.resize(image, desired_size)
     scaled = resized.astype("float32") / 255.0
     lab_repr = cv2.cvtColor(scaled, cv2.COLOR_BGR2LAB)
     # Get the channels
@@ -25,46 +51,21 @@ def extract_ab_channels_from_image(photo):
     return a, b
 
 
-def extract_ab_pixels_from_clusters(clusters):
+def get_colors_by_regions(images):
     """
-    Extracts pixels of the form (a, b) in LAB color space
-    and its associated frequency given clusters of pixels
-    :param clusters: list of pixel information in the form (a,b,frequency)
-    :return: dictionary that maps a pixel (a,b) to its frequency
-    """
-    result = {}
-
-    for i in range(len(clusters)):
-        a = clusters[i][0]
-        b = clusters[i][1]
-        frequency = clusters[i][2]
-        result[(a, b)] = frequency
-    return result
-
-
-def compute_key(x, y):
-    """
-    Given a point in the ab space, returns the region it belongs to
-    """
-    GRID_SIZE = 0.7
-    return math.floor(x / GRID_SIZE), math.floor(y / GRID_SIZE)
-
-
-def get_points_by_regions(photos):
-    """
-    Arranges ab pixels of photos according to the region
-    in the a,b space where they are
-    :return: dictionary of regions mapped to points inside
-            that region
+    Get pixels of images arranged by regions of 1x1
+    in the ab color space (a and b range from -128 to 127)
+    :param images: a list of images
+    :return: dictionary of regions mapped to the colors in that region
     """
     pts_arranged_by_regions = {}
 
-    for photo in photos:
-        a, b = extract_ab_channels_from_image(photo)
+    for image in images:
+        a, b = extract_ab_channels_from_image(image)
 
         for y in range(len(a)):
             for x in range(len(a[0])):
-                key = compute_key(a[y][x], b[y][x])
+                key = compute_key(a[y][x], b[y][x], 1)
                 if key not in pts_arranged_by_regions:
                     pts_arranged_by_regions[key] = set()
                 pts_arranged_by_regions[key].add((a[y][x], b[y][x]))
@@ -75,50 +76,85 @@ def get_points_by_regions(photos):
 def get_neighboring_regions(region):
     """
     Get regions surrounding region
+    :param region: a tuple of the form float x, float y
+    :return: itertools.product of region and its surrounding regions
     """
     x, y = region
     return itertools.product([x - 1, x, x + 1], [y - 1, y, y + 1])
 
 
-def make_distances_by_regions(points_by_regions, threshold=MAX_THRESHOLD):
+def get_neighboring_points(region, colors_by_regions):
+    """
+    Get points in region and in neighboring regions
+    :param colors_by_regions: dictionary of regions mapped to points inside
+                            that region
+    :param region: a tuple of the form float x, float y
+    :return: set of points in region and in neighboring regions
+    """
+    nr = get_neighboring_regions(region)
+    neighboring_points = set()
+
+    for r in nr:
+        if r in colors_by_regions:
+            neighboring_points |= colors_by_regions[r]
+
+    return neighboring_points
+
+
+def make_distances_by_regions(colors_by_regions, threshold=MAX_THRESHOLD):
     """
     Determines distances between pixels of adjacent regions
-    :param points_by_regions: dictionary of regions mapped to points inside
+    :param colors_by_regions: dictionary of regions mapped to points inside
                             that region
     :param threshold: maximum distance for pixels to be considered "close"
     :return: dictionary that maps each point to another dictionary containing
             its adjacent points as keys, and the distance between them as values
+            {(1,2): {(1,2):0}}
     """
     distances = {}
-    visited_points = set()
 
     # Calculate distance between points in the neighbor regions
-    for region in points_by_regions:
+    for region in colors_by_regions:
+        regions = {region}
         nr = get_neighboring_regions(region)
-        points = set() | points_by_regions[region]
-        neighboring_points = set() | points_by_regions[region]
-
         for r in nr:
-            if r in points_by_regions:
-                neighboring_points |= points_by_regions[r]
+            if r in colors_by_regions.keys():
+                regions |= {r}
 
-        neighboring_points -= visited_points
-
-        _points = np.asarray(list(points))
-        for p in points:
-            # distances between all the points
-            deltas = _points - p
+        _points = np.asarray(list(regions))
+        for r in regions:
+            deltas = _points - r
             dist = np.einsum('ij,ij->i', deltas, deltas)
-            distances[p] = {}
+            distances[r] = {}
             for i in range(len(_points)):
                 if (d := dist[i]) < threshold:
-                    distances[p][tuple(_points[i])] = d
+                    distances[r][tuple(_points[i])] = d
+
+    return distances
+
+
+def _make_distances_by_regions(colors_by_regions, threshold=MAX_THRESHOLD):
+    """
+    Determines distances between pixels of adjacent regions
+    :param colors_by_regions: dictionary of regions mapped to points inside
+                            that region
+    :param threshold: maximum distance for pixels to be considered "close"
+    :return: dictionary that maps each point to another dictionary containing
+            its adjacent points as keys, and the distance between them as values
+            {(1,2): {(1,2):0}}
+    """
+    distances = {}
+
+    # Calculate distance between points in the neighbor regions
+    for region in colors_by_regions:
+        distances[region] = {}
+        distances[region][region] = 0.0
 
     return distances
 
 
 def make_connected_component(distances, node, radius):
-    '''
+    """
     Makes the connected component containing the point 'node'
     :param distances: dictionary that maps each point to another dictionary containing
             its adjacent points as keys, and the distance between them as values
@@ -126,7 +162,7 @@ def make_connected_component(distances, node, radius):
     :param radius: maximum distance to consider two nodes as part of the same
                 connected component
     :return: set of points in the connected component containing the point 'node'
-    '''
+    """
     agenda = [node]
     visited = set()
     i = 0
@@ -134,11 +170,9 @@ def make_connected_component(distances, node, radius):
         i += 1
         curr_node = agenda.pop()
         visited.add(curr_node)
-
         for child in distances[curr_node]:
             if child not in visited and distances[curr_node][child] < radius:
                 agenda.append(child)
-
     return visited
 
 
@@ -153,12 +187,11 @@ def form_clusters(distances, cluster_radius):
     clusters = []
     visited = set()
     for point in distances:
-        if not point in visited:
+        if point not in visited:
             cluster = make_connected_component(distances, point, cluster_radius)
             visited |= cluster
             clusters.append(cluster)
 
-    print(len(clusters))
     return clusters
 
 
@@ -173,33 +206,35 @@ def binary_search(distances, left, right, target, percent_error):
     :param percent_error: margin of error for number of clusters
     :return: list of approximately 'target' number of clusters
     """
-    epsilon = target * percent_error;  # 10% of target
+    clusters = form_clusters(distances, 2.0)
+    return clusters
+    # epsilon = target * percent_error  # 10% of target
+    #
+    # if right < left:
+    #     return None  # Maybe raise an exception
+    # elif len(distances) < target:
+    #     return form_clusters(distances, left)
+    # else:
+    #     mid = (left + right) / 2
+    #     clusters = form_clusters(distances, mid)
+    #     if 0 < len(clusters) - target < epsilon:
+    #         return clusters
+    #     elif len(clusters) < target:
+    #         return binary_search(distances, left, mid, target, percent_error)
+    #     elif len(clusters) > target:
+    #         return binary_search(distances, mid, right, target, percent_error)
 
-    if right < left:
-        return None  # Maybe raise an exception
-    elif len(distances) < target:
-        return form_clusters(distances, left)
-    else:
-        mid = (left + right) / 2
-        clusters = form_clusters(distances, mid)
-        if 0 < len(clusters) - target < epsilon:
-            return clusters
-        elif len(clusters) < target:
-            return binary_search(distances, left, mid, target, percent_error)
-        elif len(clusters) > target:
-            return binary_search(distances, mid, right, target, percent_error)
 
-
-def local_dialect(distances, target=224 ** 2, percent_error=0.1):
+def get_representative_colors_and_their_frequencies(distances, target=224 ** 2, percent_error=0.1):
     """
-    Calculates pixels and their significance for the color dialect
+    Get approximately 'target' colors and their significance for the color dialect
     :param distances: dictionary that maps each point to another dictionary containing
             its adjacent points as keys, and the distance between them as values
-    :param target: size of the dialect
+    :param target: number of representative colors expected
     :param percent_error: margin of error on the size of the target
     :return: returns an array of pixel values and its frequencies in the form [(a,b,frequency)]
     """
-    clusters = binary_search(distances, 0, MAX_THRESHOLD, target, percent_error)
+    clusters = binary_search(distances, 0, 0.7, target, percent_error)
 
     if not clusters:
         return []
@@ -207,9 +242,10 @@ def local_dialect(distances, target=224 ** 2, percent_error=0.1):
         # delete the first 'len(clusters) - target' elements from clusters
         # when ordered by the size of the sets it contains
         cluster_averages = []
-        to_delete = len(clusters) - target
-        clusters.sort(key=len)
-        clusters = clusters[to_delete:]
+        if target == 224**2:
+            to_delete = len(clusters) - target
+            clusters.sort(key=len)
+            clusters = clusters[to_delete:]
 
         for cluster in clusters:
             # cluster is a set of points (a,b)
@@ -228,10 +264,7 @@ def get_image_from_pixels(clusters, target):
     :return: image in rgb space
     """
     if len(clusters) != 0:
-        l = 50
-        L = [l for i in range(target)]
-        a = []
-        b = []
+        lum = 50
 
         if target ** 2 > len(clusters):
             target = math.floor(math.sqrt(len(clusters)))
@@ -242,27 +275,14 @@ def get_image_from_pixels(clusters, target):
             for j in range(target):
                 a = clusters[i * target + j][0]
                 b = clusters[i * target + j][1]
-                new_row.append((l, a, b))
+                new_row.append((lum, a, b))
             local_dialect.append(new_row)
 
         local_dialect_lab = np.float32(local_dialect)
         local_dialect_rgb = cv2.cvtColor(local_dialect_lab, cv2.COLOR_LAB2BGR)
         local_dialect_rgb = (255 * local_dialect_rgb).astype("uint8")
-        return local_dialect_rgb
-
-
-def load_images_from_folder(folder):
-    """
-    Load images from folder
-    :param folder: string with folder path
-    :return: list of images in folder
-    """
-    images = []
-    for filename in os.listdir(folder):
-        img = cv2.imread(os.path.join(folder, filename))
-        if img is not None:
-            images.append(img)
-    return images
+        local_dialect_resized = cv2.resize(local_dialect_rgb, (target, target))
+        return local_dialect_resized
 
 
 def create_color_dialect(location):
@@ -276,16 +296,16 @@ def create_color_dialect(location):
     images = load_images_from_folder(location)
 
     print("Organize points by regions")
-    points_by_regions = get_points_by_regions(images)
+    colors_by_regions = get_colors_by_regions(images)
 
     print("Calculate distances between points")
-    distances = make_distances_by_regions(points_by_regions)
+    distances = make_distances_by_regions(colors_by_regions)
 
     print("Creating local dialect")
-    clusters = local_dialect(distances)
+    clusters = get_representative_colors_and_their_frequencies(distances)
 
     print("Save created local dialect")
-    filename = (f'{location}.pkl')
+    filename = f'Dialects/{location}.pkl'
     open_file = open(filename, "wb")
     pickle.dump(clusters, open_file)
     open_file.close()
@@ -296,33 +316,15 @@ def create_color_dialect(location):
     return clusters
 
 
-def create_color_dialect_image(image):
+def get_most_common_colors(image_filename):
     """
-    Creates color dialect given an image
-    :param image: string with filename of image
-    :return: list of clusters in the dialect
+    Get color information (color and its frequency) of most common colors in image
+    :param image_filename: string of image_filename
+    :return: a list of tuples of the form (float a, float b, int c)
     """
-    print("Organize points by regions")
-    points_by_regions = get_points_by_regions([image])
-
-    print("Calculate distances between points")
-    distances = make_distances_by_regions(points_by_regions)
-
-    print("Creating local dialect")
-    clusters = local_dialect(distances)
-
+    image = cv2.imread(image_filename)
+    image = cv2.resize(image, (200, 200))
+    colors_by_regions = get_colors_by_regions([image])
+    distances = _make_distances_by_regions(colors_by_regions)
+    clusters = get_representative_colors_and_their_frequencies(distances, target=0)
     return clusters
-
-
-def distance_to_closest_point(node, nodes):
-    """
-    Calculates distance from node to closest point
-    in nodes
-    :param node: tuple of a and b values
-    :param nodes: list of tuples of a and b values
-    :return: tuple of minimum distance and the index to closest node
-    """
-    nodes = np.asarray(nodes)
-    deltas = nodes - node
-    distance = np.einsum('ij, ij->i', deltas, deltas)
-    return min(distance), np.argmin(distance)

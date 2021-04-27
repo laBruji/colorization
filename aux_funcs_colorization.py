@@ -33,11 +33,6 @@ def get_LAB_channels(lab, target=224):
     return L, a, b
 
 
-def resize_ab_to_224(ab):
-    ab = cv2.resize(ab, (224, 224))
-    return ab
-
-
 def reconstructing_image(ab, image, lab):
     """
     Reconstructs image by merging an L channel with ab predicted channels
