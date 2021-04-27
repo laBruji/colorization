@@ -2,48 +2,53 @@ import cv2
 import numpy as np
 
 
-def regular_colorization(photo, filename):
+def get_image_and_lab(photo):
     """
-    Saves a recolorized version of photo to filename
-    :param photo: string with filename of image
-    :param filename: filename to save the recolorized image to.
+    Get image in RGB space and in LAB space from filename
+    :param photo: string, filename of image
+    :return: image in RGB, image in LAB
     """
-    # path to Caffe prototxt file
-    prototxt = "models/colorization_deploy_v2.prototxt"
-    # path to Caffe pre-trained model
-    model = "models/colorization_release_v2.caffemodel"
-    # path to cluster center points
-    points = "models/pts_in_hull.npy"
-
-    net = cv2.dnn.readNetFromCaffe(prototxt, model)
-    pts = np.load(points)
-
-    # add the cluster centers as 1x1 convolutions to the model
-    class8 = net.getLayerId("class8_ab")
-    conv8 = net.getLayerId("conv8_313_rh")
-    pts = pts.transpose().reshape(2, 313, 1, 1)
-    net.getLayer(class8).blobs = [pts.astype("float32")]
-    net.getLayer(conv8).blobs = [np.full([1, 313], 2.606, dtype="float32")]
-
     image = cv2.imread(photo)
     scaled = image.astype("float32") / 255.0
     lab = cv2.cvtColor(scaled, cv2.COLOR_BGR2LAB)
 
-    # resize the Lab image to 224x224 (the dimensions the colorization
-    # network accepts), split channels, extract the 'L' channel, and then
-    # perform mean centering
-    resized = cv2.resize(lab, (224, 224))
+    return image, lab
+
+
+def get_LAB_channels(lab, target=224):
+    """
+    resize the Lab image to 224x224 (the dimensions the colorization
+    network accepts), split channels, extract the 'L' channel, and
+    perform mean centering
+    :param target: desired dimension to resize image to a square image
+    :param lab: image in LAB space
+    :return: channels (L,a,b)
+    """
+    resized = cv2.resize(lab, (target, target))
     L = cv2.split(resized)[0]
     L -= 50
+    a = cv2.split(resized)[1]
+    b = cv2.split(resized)[2]
 
-    # pass the L channel through the network which will *predict* the 'a'
-    # and 'b' channel values
-    net.setInput(cv2.dnn.blobFromImage(L))
-    ab = net.forward()[0, :, :, :].transpose((1, 2, 0))
+    return L, a, b
 
+
+def resize_ab_to_224(ab):
+    ab = cv2.resize(ab, (224, 224))
+    return ab
+
+
+def reconstructing_image(ab, image, lab):
+    """
+    Reconstructs image by merging an L channel with ab predicted channels
+    :param ab: predicted channels
+    :param image: RGB pixel values of original image
+    :param lab: LAB pixel values of original image
+    :return: colorized image in RGB space
+    """
     # resize the predicted 'ab' volume to the same dimensions as our
     # input image
-    ab = cv2.resize(ab, (image.shape[1], image.shape[0]))
+    ab = cv2.resize(np.float32(ab), (image.shape[1], image.shape[0]))
     # grab the 'L' channel from the *original* input image (not the
     # resized one) and concatenate the original 'L' channel with the
     # predicted 'ab' channels
@@ -57,14 +62,6 @@ def regular_colorization(photo, filename):
 
     # convert to an unsigned 8-bit integer representation in the range [0, 255]
     colorized = (255 * colorized).astype("uint8")
-    cv2.imwrite(filename, colorized)
+    return colorized
 
 
-def recolorize_images(images, filenames):
-    """
-    Saves a recolorized version of images to filenames
-    :param images: images to recolorize
-    :param filenames: filenames to save the recolorized images to
-    """
-    for i in range(len(images)):
-        regular_colorization(images[i], filenames[i])
