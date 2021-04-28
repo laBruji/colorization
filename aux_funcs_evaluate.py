@@ -1,6 +1,6 @@
 import pickle
 from os import path
-from aux_funcs_local_dialect import create_color_dialect, get_most_common_colors, compute_key
+from aux_funcs_local_dialect import create_color_dialect, get_most_common_colors
 import numpy as np
 
 
@@ -68,8 +68,7 @@ def evaluate_colors(colors_info, local_dialect):
     """
     sum_errors = 0
     for info in colors_info:
-        # print(info)
-        color = compute_key(info[0], info[1], 0.5)
+        color = info[0], info[1]
         frequency = info[2]
         sum_errors += evaluate_one_color(color, frequency, local_dialect)
 

@@ -51,7 +51,7 @@ def extract_ab_channels_from_image(image):
     return a, b
 
 
-def get_colors_by_regions(images):
+def get_colors_by_regions(images, grid_size):
     """
     Get pixels of images arranged by regions of 1x1
     in the ab color space (a and b range from -128 to 127)
@@ -65,7 +65,7 @@ def get_colors_by_regions(images):
 
         for y in range(len(a)):
             for x in range(len(a[0])):
-                key = compute_key(a[y][x], b[y][x], 1)
+                key = compute_key(a[y][x], b[y][x], grid_size)
                 if key not in pts_arranged_by_regions:
                     pts_arranged_by_regions[key] = set()
                 pts_arranged_by_regions[key].add((a[y][x], b[y][x]))
@@ -141,14 +141,14 @@ def _make_distances_by_regions(colors_by_regions, threshold=MAX_THRESHOLD):
     :param threshold: maximum distance for pixels to be considered "close"
     :return: dictionary that maps each point to another dictionary containing
             its adjacent points as keys, and the distance between them as values
-            {(1,2): {(1,2):0}}
+            {(1,2): {(1,2):0, #of points in region}}
     """
     distances = {}
 
     # Calculate distance between points in the neighbor regions
     for region in colors_by_regions:
         distances[region] = {}
-        distances[region][region] = 0.0
+        distances[region][region] = (0.0, len(region))
 
     return distances
 
@@ -234,8 +234,8 @@ def get_representative_colors_and_their_frequencies(distances, target=224 ** 2, 
     :param percent_error: margin of error on the size of the target
     :return: returns an array of pixel values and its frequencies in the form [(a,b,frequency)]
     """
-    clusters = binary_search(distances, 0, 0.7, target, percent_error)
-
+    # clusters = binary_search(distances, 0, 0.7, target, percent_error)
+    clusters = form_clusters(distances, 2.0)
     if not clusters:
         return []
     else:
@@ -296,7 +296,7 @@ def create_color_dialect(location):
     images = load_images_from_folder(location)
 
     print("Organize points by regions")
-    colors_by_regions = get_colors_by_regions(images)
+    colors_by_regions = get_colors_by_regions(images, 1)
 
     print("Calculate distances between points")
     distances = make_distances_by_regions(colors_by_regions)
@@ -324,7 +324,8 @@ def get_most_common_colors(image_filename):
     """
     image = cv2.imread(image_filename)
     image = cv2.resize(image, (200, 200))
-    colors_by_regions = get_colors_by_regions([image])
-    distances = _make_distances_by_regions(colors_by_regions)
-    clusters = get_representative_colors_and_their_frequencies(distances, target=0)
+    colors_by_regions = get_colors_by_regions([image], 0.5)
+    clusters = []
+    for region, colors in colors_by_regions.items():
+        clusters.append((region[0], region[1], len(colors)))
     return clusters

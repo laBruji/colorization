@@ -5,7 +5,7 @@ from aux_funcs_evaluate import find_closest_color
 from aux_funcs_local_dialect import compute_key
 
 
-def recolorize_pixel(pixel, closest_color, distance):
+def recolorize_pixel(pixel, closest_color, distance, frequency):
     """
     Change pixel if it is close enough to closest_color
     :param pixel: tuple of floats in the form (a, b)
@@ -14,7 +14,7 @@ def recolorize_pixel(pixel, closest_color, distance):
     :return: tuple of floats in the form (a,b)
     """
     new_pixel = pixel
-    if distance < 2.0:
+    if distance < 2.0 and frequency > 20:
         new_pixel = closest_color
     return new_pixel
 
@@ -30,13 +30,15 @@ def recolorize_one_image(image, new_filename, local_dialect):
     L, a, b = get_LAB_channels(lab, target=100)
     new_a, new_b = a, b
     memo = {}
+
     for i in range(len(a)):
         for j in range(len(a[0])):
             pixel = compute_key(a[i][j], b[i][j], 0.5)
             if pixel not in memo:
                 idx, distance = find_closest_color(pixel, local_dialect)
                 closest_color = local_dialect[idx][0], local_dialect[idx][1]
-                new_a[i][j], new_b[i][j] = recolorize_pixel(pixel, closest_color, distance)
+                frequency = local_dialect[idx][2]
+                new_a[i][j], new_b[i][j] = recolorize_pixel(pixel, closest_color, distance, frequency)
                 memo[pixel] = (new_a[i][j], new_b[i][j])
             else:
                 new_a[i][j], new_b[i][j] = memo[pixel]

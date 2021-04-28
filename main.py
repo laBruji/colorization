@@ -1,8 +1,11 @@
 import pickle
 import numpy as np
+
+from graph import graph_dialect, graph_errors
 from romero_colorization import romero_colorization
 from zhang_colorization import zhang_colorization
 from aux_funcs_evaluate import evaluate_images_colorization_in_location, get_local_dialect
+from aux_funcs_local_dialect import create_color_dialect, get_most_common_colors
 
 
 def get_filenames_current_paths(sample_size, location):
@@ -75,9 +78,6 @@ def colorize_and_evaluate():
         print("Images colorized by Zhang")
 
         zhang_errors = evaluate_images_colorization_in_location(future_paths, location)
-        zhang_error = sum(np.asarray(zhang_errors)) / sample_size
-        print(f'Zhang error: {zhang_error}')
-
         save_results(location, zhang_errors)
 
         improved_paths = get_improved_paths(sample_size, location)
@@ -86,9 +86,6 @@ def colorize_and_evaluate():
 
         romerrors = evaluate_images_colorization_in_location(improved_paths, location)
 
-        romerror = sum(np.asarray(romerrors)) / sample_size
-        print(f'Rom error: {romerror}')
-
         save_results(location, romerrors)
 
 
@@ -96,4 +93,7 @@ if __name__ == '__main__':
     sample_size = 10
     locations = ["Egypt", "Mexico", "Norway", "Paris"]
 
-    colorize_and_evaluate()
+    # colorize_and_evaluate()
+    for location in locations:
+        # graph_dialect(location)
+        graph_errors(location)
